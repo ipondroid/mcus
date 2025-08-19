@@ -1,22 +1,10 @@
-
-#include <stdio.h>
-#include <stdint.h>
-#include <stddef.h>
-#include <string.h>
-#include <stdbool.h>
-#include "nvs.h"
-#include "nvs_flash.h"
-
+#include "ble_task.h"
+#include "state_manager.h"
+#include "events.h"
+#include "commands.h"
+#include "shared_types.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "freertos/event_groups.h"
-
-
-#include "driver/spi_slave.h"
-#include "driver/gpio.h"
-
-#include "esp_timer.h"
-#include "esp_system.h"
 #include "esp_log.h"
 
 #include "esp_bt.h"
@@ -28,51 +16,13 @@
 #include "esp_gatt_common_api.h"
 #include "esp_gatt_defs.h"
 
+#include <string.h>
 
-#define SENSOR_TAG "SENSOR"
+static const char* TAG = "BleTask";
 
 static float g_temperature = 0.0f;
 static float g_humidity = 0.0f;
 static SemaphoreHandle_t g_sensor_mutex = NULL;
-
-static void init_sensor_mutex(void) {
-    g_sensor_mutex = xSemaphoreCreateMutex();
-    if (g_sensor_mutex == NULL) {
-        ESP_LOGE(SENSOR_TAG, "Failed to create sensor mutex");
-    }
-}
-
-void set_temperature(float temperature) {
-    if (g_sensor_mutex != NULL && xSemaphoreTake(g_sensor_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
-        g_temperature = temperature;
-        xSemaphoreGive(g_sensor_mutex);
-    }
-}
-
-float get_temperature(void) {
-    float temp = 0.0f;
-    if (g_sensor_mutex != NULL && xSemaphoreTake(g_sensor_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
-        temp = g_temperature;
-        xSemaphoreGive(g_sensor_mutex);
-    }
-    return temp;
-}
-
-void set_humidity(float humidity) {
-    if (g_sensor_mutex != NULL && xSemaphoreTake(g_sensor_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
-        g_humidity = humidity;
-        xSemaphoreGive(g_sensor_mutex);
-    }
-}
-
-float get_humidity(void) {
-    float humid = 0.0f;
-    if (g_sensor_mutex != NULL && xSemaphoreTake(g_sensor_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
-        humid = g_humidity;
-        xSemaphoreGive(g_sensor_mutex);
-    }
-    return humid;
-}
 
 #define GATTS_TAG "TH_SR"
 
@@ -113,17 +63,19 @@ static uint8_t service_uuid[16] = {
 static const uint16_t primary_service_uuid         = ESP_GATT_UUID_PRI_SERVICE;
 static const uint16_t character_declaration_uuid   = ESP_GATT_UUID_CHAR_DECLARE;
 static const uint16_t character_client_config_uuid = ESP_GATT_UUID_CHAR_CLIENT_CONFIG;
-// static const uint8_t char_prop_read                =  ESP_GATT_CHAR_PROP_BIT_READ;
-// static const uint8_t char_prop_write               = ESP_GATT_CHAR_PROP_BIT_WRITE;
 static const uint8_t  char_prop_read_notify        = ESP_GATT_CHAR_PROP_BIT_READ | ESP_GATT_CHAR_PROP_BIT_NOTIFY;
-
-static uint8_t temperature_value[2]          = {0x00, 0x00};
-static uint8_t humidity_value[2]             = {0x11, 0x22};
 
 #define ADV_CONFIG_FLAG             (1 << 0)
 #define SCAN_RSP_CONFIG_FLAG        (1 << 1)
 
 uint16_t cccd_value = 0;
+
+#define SENSOR_NOTIFY_INTERVAL_MS  10000 // 10 seconds
+
+extern uint16_t handle_table[HRS_IDX_NB];
+uint16_t notify_conn_id = 0xFFFF;
+esp_gatt_if_t notify_gatts_if = 0;
+// bool notify_enabled = false;
 
 static esp_ble_adv_data_t adv_data = {
     .set_scan_rsp = false,
@@ -221,12 +173,44 @@ static const esp_gatts_attr_db_t gatt_db[HRS_IDX_NB] = {
             sizeof(uint16_t), sizeof(uint16_t), (uint8_t *)&cccd_value}},
 };
 
-#define SENSOR_NOTIFY_INTERVAL_MS  10000 // 10 seconds
+static void init_sensor_mutex(void) {
+    g_sensor_mutex = xSemaphoreCreateMutex();
+    if (g_sensor_mutex == NULL) {
+        ESP_LOGE(TAG, "Failed to create sensor mutex");
+    }
+}
 
-extern uint16_t handle_table[HRS_IDX_NB];
-uint16_t notify_conn_id = 0xFFFF;
-esp_gatt_if_t notify_gatts_if = 0;
-// bool notify_enabled = false;
+void set_temperature(float temperature) {
+    if (g_sensor_mutex != NULL && xSemaphoreTake(g_sensor_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+        g_temperature = temperature;
+        xSemaphoreGive(g_sensor_mutex);
+    }
+}
+
+float get_temperature(void) {
+    float temp = 0.0f;
+    if (g_sensor_mutex != NULL && xSemaphoreTake(g_sensor_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+        temp = g_temperature;
+        xSemaphoreGive(g_sensor_mutex);
+    }
+    return temp;
+}
+
+void set_humidity(float humidity) {
+    if (g_sensor_mutex != NULL && xSemaphoreTake(g_sensor_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+        g_humidity = humidity;
+        xSemaphoreGive(g_sensor_mutex);
+    }
+}
+
+float get_humidity(void) {
+    float humid = 0.0f;
+    if (g_sensor_mutex != NULL && xSemaphoreTake(g_sensor_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+        humid = g_humidity;
+        xSemaphoreGive(g_sensor_mutex);
+    }
+    return humid;
+}
 
 static void gap_event_handler(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t *param)
 {
@@ -265,9 +249,9 @@ static void gap_event_handler(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param
     }
 }
 
-
 static void gatts_profile_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param)
 {
+    Event_t newEvent;
     switch (event) {
         case ESP_GATTS_REG_EVT:{
             ESP_LOGI(GATTS_TAG, "GATT server register, status %d, app_id %d, gatts_if %d", param->reg.status, param->reg.app_id, gatts_if);
@@ -296,7 +280,7 @@ static void gatts_profile_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_
             if (param->read.need_rsp == false) {
                 ESP_LOGI(GATTS_TAG, "No response needed for read event");
             } else {
-                // ESP_LOGI(GATTS_TAG, "Response needed for read event");
+                ESP_LOGI(GATTS_TAG, "Response needed for read event");
                 esp_gatt_rsp_t rsp;
                 memset(&rsp, 0, sizeof(esp_gatt_rsp_t));
                 rsp.attr_value.handle = param->read.handle;
@@ -363,12 +347,14 @@ static void gatts_profile_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_
             conn_params.timeout = 400;    // timeout = 400*10ms = 4000ms
             esp_ble_gap_update_conn_params(&conn_params);
 
-            // start_sensor_notify_timer();
+            newEvent = (Event_t){ .eType = EVT_BLE_CLIENT_CONNECTED };
+            xQueueSend(g_xEventQueue, &newEvent, 0);
             break;
         case ESP_GATTS_DISCONNECT_EVT:
             // ESP_LOGI(GATTS_TAG, "ESP_GATTS_DISCONNECT_EVT, reason = 0x%x", param->disconnect.reason);
             // notify_enabled = false;
-            // stop_sensor_notify_timer();
+            newEvent = (Event_t){ .eType = EVT_BLE_CLIENT_DISCONNECTED };
+            xQueueSend(g_xEventQueue, &newEvent, 0);
             esp_ble_gap_start_advertising(&adv_params);
             break;
         case ESP_GATTS_CREAT_ATTR_TAB_EVT:{
@@ -424,82 +410,7 @@ static void gatts_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_
     } while (0);
 }
 
-#ifdef CONFIG_IDF_TARGET_ESP32
-#define RCV_HOST    HSPI_HOST
-#else
-#define RCV_HOST    SPI2_HOST
-#endif
-
-#define GPIO_HANDSHAKE      2
-#define GPIO_MOSI           6
-#define GPIO_MISO           5
-#define GPIO_SCLK           4
-#define GPIO_CS             7
-
-#define SPI_TAG "TH_SPI"
-
-#define BLINK_GPIO 8
-static bool g_led_state = false;
-
-void my_post_setup_cb(spi_slave_transaction_t *trans)
-{
-    gpio_set_level(GPIO_HANDSHAKE, 1);
-}
-
-void my_post_trans_cb(spi_slave_transaction_t *trans)
-{
-    gpio_set_level(GPIO_HANDSHAKE, 0);
-}
-
-static void blink_led(void)
-{
-    g_led_state = !g_led_state;
-    gpio_set_level(BLINK_GPIO, g_led_state);
-}
-
-static void configure_led(void)
-{
-    gpio_reset_pin(BLINK_GPIO);
-    gpio_set_direction(BLINK_GPIO, GPIO_MODE_OUTPUT);
-}
-
-void spi_slave_init(void)
-{
-    esp_err_t ret;
-
-    spi_bus_config_t buscfg = {
-        .mosi_io_num = GPIO_MOSI,
-        .miso_io_num = GPIO_MISO,
-        .sclk_io_num = GPIO_SCLK,
-        .quadwp_io_num = -1,
-        .quadhd_io_num = -1,
-    };
-
-    spi_slave_interface_config_t slvcfg = {
-        .mode = 0,
-        .spics_io_num = GPIO_CS,
-        .queue_size = 3,
-        .flags = 0,
-        .post_setup_cb = my_post_setup_cb,
-        .post_trans_cb = my_post_trans_cb
-    };
-
-    gpio_config_t io_conf = {
-        .intr_type = GPIO_INTR_DISABLE,
-        .mode = GPIO_MODE_OUTPUT,
-        .pin_bit_mask = BIT64(GPIO_HANDSHAKE),
-    };
-
-    gpio_config(&io_conf);
-    gpio_set_pull_mode(GPIO_MOSI, GPIO_PULLUP_ONLY);
-    gpio_set_pull_mode(GPIO_SCLK, GPIO_PULLUP_ONLY);
-    gpio_set_pull_mode(GPIO_CS, GPIO_PULLUP_ONLY);
-
-    ret = spi_slave_initialize(RCV_HOST, &buscfg, &slvcfg, SPI_DMA_CH_AUTO);
-    assert(ret == ESP_OK);
-}
-
-void ble_init() {
+static void ble_init() {
     esp_err_t ret;
 
     ESP_ERROR_CHECK(esp_bt_controller_mem_release(ESP_BT_MODE_CLASSIC_BT));
@@ -507,104 +418,73 @@ void ble_init() {
     esp_bt_controller_config_t bt_cfg = BT_CONTROLLER_INIT_CONFIG_DEFAULT();
     ret = esp_bt_controller_init(&bt_cfg);
     if (ret) {
-        ESP_LOGE(GATTS_TAG, "%s initialize controller failed: %s", __func__, esp_err_to_name(ret));
+        ESP_LOGE(TAG, "%s initialize controller failed: %s", __func__, esp_err_to_name(ret));
         return;
     }
 
     ret = esp_bt_controller_enable(ESP_BT_MODE_BLE);
     if (ret) {
-        ESP_LOGE(GATTS_TAG, "%s enable controller failed: %s", __func__, esp_err_to_name(ret));
+        ESP_LOGE(TAG, "%s enable controller failed: %s", __func__, esp_err_to_name(ret));
         return;
     }
 
     ret = esp_bluedroid_init();
     if (ret) {
-        ESP_LOGE(GATTS_TAG, "%s init bluetooth failed: %s", __func__, esp_err_to_name(ret));
+        ESP_LOGE(TAG, "%s init bluetooth failed: %s", __func__, esp_err_to_name(ret));
         return;
     }
 
     ret = esp_bluedroid_enable();
     if (ret) {
-        ESP_LOGE(GATTS_TAG, "%s enable bluetooth failed: %s", __func__, esp_err_to_name(ret));
+        ESP_LOGE(TAG, "%s enable bluetooth failed: %s", __func__, esp_err_to_name(ret));
         return;
     }
 
     ret = esp_ble_gatts_register_callback(gatts_event_handler);
     if (ret){
-        ESP_LOGE(GATTS_TAG, "gatts register error, error code = %x", ret);
+        ESP_LOGE(TAG, "gatts register error, error code = %x", ret);
         return;
     }
 
     ret = esp_ble_gap_register_callback(gap_event_handler);
     if (ret){
-        ESP_LOGE(GATTS_TAG, "gap register error, error code = %x", ret);
+        ESP_LOGE(TAG, "gap register error, error code = %x", ret);
         return;
     }
 
     ret = esp_ble_gatts_app_register(APP_ID);
     if (ret){
-        ESP_LOGE(GATTS_TAG, "gatts app register error, error code = %x", ret);
+        ESP_LOGE(TAG, "gatts app register error, error code = %x", ret);
         return;
     }
 
     esp_err_t local_mtu_ret = esp_ble_gatt_set_local_mtu(500);
     if (local_mtu_ret){
-        ESP_LOGE(GATTS_TAG, "set local  MTU failed, error code = %x", local_mtu_ret);
+        ESP_LOGE(TAG, "set local  MTU failed, error code = %x", local_mtu_ret);
     }
 }
 
-void spi_task(void *param) {
-    size_t buf_size = 4; // 4 bytes for temperature and humidity
-    uint8_t *rx_buf = (uint8_t *)spi_bus_dma_memory_alloc(RCV_HOST, buf_size, 0);
-    assert(rx_buf);
-    spi_slave_transaction_t trans = {0};
+static void prvBleTask(void* pvParameters) {
+    Command_t xReceivedCommand;
+    ESP_LOGI(TAG, "BLET");
 
-    trans.length = 4 * 8; // bits
-    trans.rx_buffer = rx_buf;
-    while (1) {
-        memset(rx_buf, 0, buf_size);
-
-        if (spi_slave_transmit(SPI2_HOST, &trans, portMAX_DELAY) == ESP_OK) {
-            ESP_LOGI(SPI_TAG, " ");
-            ESP_LOGI(SPI_TAG, "SPI [%02x %02x %02x %02x]", rx_buf[0], rx_buf[1], rx_buf[2], rx_buf[3]);
-
-            float t = rx_buf[0] + rx_buf[1] / 100.f;
-            float h = rx_buf[2] + rx_buf[3] / 100.f;
-            ESP_LOGI(SPI_TAG, "SPI Received: T=%.2f, H=%.2f", t, h);
-            set_temperature(t);
-            set_humidity(h);
-            // send_sensor_notification(NULL);
-        }
-        blink_led();
-    }
-
-    free(rx_buf);
-}
-
-void app_main(void)
-{
-    esp_err_t ret;
-
-    // Initialize sensor mutex
     init_sensor_mutex();
-
-    // Initialize NVS.
-    ret = nvs_flash_init();
-    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-        ESP_ERROR_CHECK(nvs_flash_erase());
-        ret = nvs_flash_init();
-    }
-    ESP_ERROR_CHECK( ret );
-
-    configure_led();
-
-    spi_slave_init();
-
     ble_init();
 
-    xTaskCreate(spi_task, "spi_task", 4096, NULL, 5, NULL);
-
-    while(1) {
-        vTaskDelay(pdMS_TO_TICKS(500)); // 500ms delay
+    for (;;) {
+        if (xQueueReceive(g_xBleCommandQueue, &xReceivedCommand, portMAX_DELAY) == pdPASS) {
+            if (xReceivedCommand.eType == CMD_BLE_NOTIFY_DATA) {
+                SensorData_t* pData = &xReceivedCommand.xSensorData;
+                ESP_LOGI(TAG, "Received CMD_BLE_NOTIFY_DATA: Temperature=%.2f, Humidity=%.2f",
+                         pData->fTemperature, pData->fHumidity);
+                set_humidity(pData->fHumidity);
+                set_temperature(pData->fTemperature);
+            }
+        }
     }
 }
+
+BaseType_t BleTask_CreateTask(void) {
+    return xTaskCreate(prvBleTask, "Ble_Task", 4096, NULL, 5, NULL);
+}
+

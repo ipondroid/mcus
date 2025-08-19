@@ -19,7 +19,6 @@
 #include "task.h"
 #include "semphr.h"
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
@@ -30,8 +29,17 @@
 /* USER CODE BEGIN Includes */
 #include <stdio.h>
 #include <float.h>
-#include <dht22.h>
-#include "4ilo/4ilo_ssd1306.h"
+
+// Include task headers
+#include "events.h"
+#include "state_manager.h"
+#include "can_task.h"
+#include "spi_task.h"
+#include "sensor_task.h"
+#include "display_task.h"
+#include "commands.h"
+
+#include "dht22.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -59,50 +67,13 @@ TIM_HandleTypeDef htim6;
 
 UART_HandleTypeDef huart2;
 
-/* Definitions for defaultTask */
-osThreadId_t defaultTaskHandle;
-const osThreadAttr_t defaultTask_attributes = {
-  .name = "defaultTask",
-  .stack_size = 128 * 4,
-  .priority = (osPriority_t) osPriorityBelowNormal,
-};
-/* Definitions for dht22Task */
-osThreadId_t dht22TaskHandle;
-const osThreadAttr_t dht22Task_attributes = {
-  .name = "dht22Task",
-  .stack_size = 256 * 4,
-  .priority = (osPriority_t) osPriorityNormal3,
-};
-/* Definitions for BleTask */
-osThreadId_t BleTaskHandle;
-const osThreadAttr_t BleTask_attributes = {
-  .name = "BleTask",
-  .stack_size = 256 * 4,
-  .priority = (osPriority_t) osPriorityNormal2,
-};
-/* Definitions for CanReceiveTask */
-osThreadId_t CanReceiveTaskHandle;
-const osThreadAttr_t CanReceiveTask_attributes = {
-  .name = "CanReceiveTask",
-  .stack_size = 256 * 4,
-  .priority = (osPriority_t) osPriorityNormal1,
-};
-/* Definitions for displayTask */
-osThreadId_t displayTaskHandle;
-const osThreadAttr_t displayTask_attributes = {
-  .name = "displayTask",
-  .stack_size = 256 * 4,
-  .priority = (osPriority_t) osPriorityNormal,
-};
-/* USER CODE BEGIN PV */
-uint8_t canReceived;
-uint8_t canMsgCount = 0;
-CAN_RxHeaderTypeDef canRcvRxHeader;
-uint8_t canRcvData[8];
-SemaphoreHandle_t xSemaphore = NULL;
-CAN_FilterTypeDef canFilter;
-QueueHandle_t dht22Queue = NULL;
-QueueHandle_t spiQueue = NULL;
+// Global Queue Handles
+QueueHandle_t g_xEventQueue = NULL;
+QueueHandle_t g_xSpiCommandQueue = NULL;
+QueueHandle_t g_xCanCommandQueue = NULL;
+QueueHandle_t g_xDisplayCommandQueue = NULL;
+
+CAN_FilterTypeDef canFilter; // CAN Bus filter
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -113,15 +84,11 @@ static void MX_CAN1_Init(void);
 static void MX_TIM6_Init(void);
 static void MX_I2C1_Init(void);
 static void MX_SPI2_Init(void);
-void StartDefaultTask(void *argument);
-void StartDHT22Task(void *argument);
-void StartBleTask(void *argument);
-void StartCanReceiveTask(void *argument);
-void StartDisplayTask(void *argument);
 
 /* USER CODE BEGIN PFP */
 static void CAN_Config(void);
 
+extern void setTimer(TIM_HandleTypeDef *timer);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -176,14 +143,6 @@ int main(void)
 
   /* USER CODE BEGIN RTOS_SEMAPHORES */
   /* add semaphores, ... */
-  xSemaphore = xSemaphoreCreateBinary();
-  if(xSemaphore != NULL) {
-    if(xSemaphoreGive(xSemaphore) != pdTRUE) {
-      printf("[%d] Failed to give semaphore\n\r", __LINE__);
-      // We would expect this call to fail because we cannot give
-      // a semaphore without first "taking" it!
-    }
-  }
   /* USER CODE END RTOS_SEMAPHORES */
 
   /* USER CODE BEGIN RTOS_TIMERS */
@@ -194,37 +153,18 @@ int main(void)
 
   /* USER CODE BEGIN RTOS_QUEUES */
   /* add queues, ... */
-  dht22Queue = xQueueCreate(10, sizeof(DHT_DataTypedef));
-  if (dht22Queue == NULL) {
-    printf("Failed to create dht22Queue\n");
-    while(1) {
-      osDelay(1);
-    }
-  }
-  spiQueue = xQueueCreate(10, sizeof(DHT_DataTypedef));
-  if (spiQueue == NULL) {
-    printf("Failed to create spiQueue\n");
-    while(1) {
-      osDelay(1);
-    }
-  }
+  g_xEventQueue = xQueueCreate(10, sizeof(Event_t));
+  g_xSpiCommandQueue = xQueueCreate(5, sizeof(Command_t));
+  g_xCanCommandQueue = xQueueCreate(5, sizeof(Command_t));
+  g_xDisplayCommandQueue = xQueueCreate(5, sizeof(Command_t));
   /* USER CODE END RTOS_QUEUES */
 
   /* Create the thread(s) */
-  /* creation of defaultTask */
-  defaultTaskHandle = osThreadNew(StartDefaultTask, NULL, &defaultTask_attributes);
-
-  /* creation of dht22Task */
-  dht22TaskHandle = osThreadNew(StartDHT22Task, NULL, &dht22Task_attributes);
-
-  /* creation of BleTask */
-  BleTaskHandle = osThreadNew(StartBleTask, NULL, &BleTask_attributes);
-
-  /* creation of CanReceiveTask */
-  CanReceiveTaskHandle = osThreadNew(StartCanReceiveTask, NULL, &CanReceiveTask_attributes);
-
-  /* creation of displayTask */
-  displayTaskHandle = osThreadNew(StartDisplayTask, NULL, &displayTask_attributes);
+  StateManager_CreateTask();
+  CanTask_CreateTask();
+  SpiTask_CreateTask();
+  SensorTask_CreateTask();
+  DisplayTask_CreateTask();
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
@@ -544,31 +484,6 @@ PUTCHAR_PROTOTYPE
 	return ch;
 }
 
-/**
-  * @brief  Rx Fifo 0 message pending callback
-  * @param  hcan: pointer to a CAN_HandleTypeDef structure that contains
-  *         the configuration information for the specified CAN.
-  * @retval None
-  */
-void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan)
-{
-  if (hcan->Instance != CAN1)
-  {
-	  // printf("CAN1 RX\n\r");
-    return;
-  }
-
-  /* Get RX message */
-  if (HAL_CAN_GetRxMessage(hcan, CAN_RX_FIFO0, &canRcvRxHeader, canRcvData) != HAL_OK)
-  {
-    /* Reception Error */
-    // printf("CAN1 receive message error\n\r");
-    return;
-  }
-
-  canReceived = 1;
-}
-
 static void CAN_Config(void)
 {
   canFilter.FilterBank = 0;
@@ -592,246 +507,7 @@ static void CAN_Config(void)
     printf("CAN1 activate notification error\n\r");
   }
 }
-
-void vMainCanTransmit(CAN_HandleTypeDef *handle, DHT_DataTypedef* dhtData)
-{
-  CAN_TxHeaderTypeDef txHeader;
-  uint32_t txMailbox;
-  uint8_t txData[5];
-  uint8_t intPart, fractPart;
-
-  txHeader.IDE = CAN_ID_STD;
-  txHeader.RTR = CAN_RTR_DATA;
-  txHeader.StdId = 0x030;
-  txHeader.ExtId = 0x03;
-  txHeader.TransmitGlobalTime = DISABLE;
-
-  txHeader.DLC = 5;
-  intPart = (uint8_t)dhtData->Humidity;
-  fractPart = (uint8_t)(dhtData->Humidity*100 - intPart*100);
-  txData[0] = intPart;
-  txData[1] = fractPart;
-  intPart = (uint8_t)dhtData->Temperature;
-  fractPart = (uint8_t)(dhtData->Temperature*100 - intPart*100);
-  txData[2] = intPart;
-  txData[3] = fractPart;
-  txData[4] = ++canMsgCount;
-	printf("CAN [%02d %02d %02d %02d %02d]\n\r",
-    txData[0], txData[1], txData[2], txData[3], txData[4]);
-
-  // check if mailboxes are free
-  uint32_t timeout = pdMS_TO_TICKS(100);
-  TickType_t start = xTaskGetTickCount();
-  while(HAL_CAN_GetTxMailboxesFreeLevel(handle) != 3) {
-      if((xTaskGetTickCount() - start) > timeout) {
-          // timeout
-          printf("CAN transmit timeout\n\r");
-          break;
-      }
-      taskYIELD();
-  }
-
-  if (HAL_CAN_AddTxMessage(&hcan1, &txHeader, txData, &txMailbox) != HAL_OK)
-  {
-    /* Transmission request Error */
-    printf("CAN transmit error\n\r");
-    return;
-  }
-
-  HAL_GPIO_TogglePin(LD2_GPIO_Port, LD2_Pin);
-}
 /* USER CODE END 4 */
-
-/* USER CODE BEGIN Header_StartDefaultTask */
-/**
-  * @brief  Function implementing the defaultTask thread.
-  * @param  argument: Not used
-  * @retval None
-  */
-/* USER CODE END Header_StartDefaultTask */
-void StartDefaultTask(void *argument)
-{
-  /* USER CODE BEGIN 5 */
-  /* Infinite loop */
-  for(;;)
-  {
-    osDelay(1);
-  }
-  /* USER CODE END 5 */
-}
-
-/* USER CODE BEGIN Header_StartDHT22Task */
-/**
-* @brief Function implementing the dht22Task thread.
-* @param argument: Not used
-* @retval None
-*/
-/* USER CODE END Header_StartDHT22Task */
-void StartDHT22Task(void *argument)
-{
-  /* USER CODE BEGIN StartDHT22Task */
-  vTaskDelay(pdMS_TO_TICKS(1000)); // wait for display task
-  DHT_DataTypedef dht22Data;
-
-  /* Infinite loop */
-  for(;;)
-  {
-    dht22Data.Humidity = FLT_MAX;
-    dht22Data.Temperature = FLT_MIN;
-    if(DHT_GetData(&dht22Data) == 0) {
-      printf("DHT_GetData() error\n\r");
-    } else {
-      printf("\n\rDHT T:%.2f H:%.2f\n\r", dht22Data.Temperature, dht22Data.Humidity);
-      if(xQueueSend(dht22Queue, &dht22Data, pdMS_TO_TICKS(100)) != pdPASS) {
-        printf("Failed to send data to queue\n\r");
-      }
-      if(xQueueSend(spiQueue, &dht22Data, pdMS_TO_TICKS(100)) != pdPASS) {
-        printf("Failed to send data to queue\n\r");
-      }
-	}
-	vTaskDelay(pdMS_TO_TICKS(3000));
-  }
-  /* USER CODE END StartDHT22Task */
-}
-
-/* USER CODE BEGIN Header_StartBleTask */
-/**
-* @brief Function implementing the BleTask thread.
-* @param argument: Not used
-* @retval None
-*/
-/* USER CODE END Header_StartBleTask */
-
-static void SPI_CS_Select(void)
-{
-  HAL_GPIO_WritePin(SPI2_CS1_GPIO_Port, SPI2_CS1_Pin, GPIO_PIN_RESET);
-}
-
-static void SPI_CS_Deselect(void)
-{
-  HAL_GPIO_WritePin(SPI2_CS1_GPIO_Port, SPI2_CS1_Pin, GPIO_PIN_SET);
-}
-
-void StartBleTask(void *argument)
-{
-  /* USER CODE BEGIN StartBleTask */
-  uint8_t txData[4];
-  DHT_DataTypedef dht22Data;
-  uint8_t intPart, fractPart;
-
-  for(;;)
-  {
-    if (xQueueReceive(spiQueue, &dht22Data, pdMS_TO_TICKS(100)) == pdPASS)
-    {
-      intPart = (uint8_t)dht22Data.Temperature;
-      fractPart = (uint8_t)(dht22Data.Temperature*100 - intPart*100);
-      txData[0] = intPart;
-      txData[1] = fractPart;
-      intPart = (uint8_t)dht22Data.Humidity;
-      fractPart = (uint8_t)(dht22Data.Humidity*100 - intPart*100);
-      txData[2] = intPart;
-      txData[3] = fractPart;
-
-      printf("SPI [%02x %02x %02x %02x]\n\r", txData[0], txData[1], txData[2], txData[3]);
-
-      SPI_CS_Select();
-
-      HAL_StatusTypeDef status = HAL_SPI_Transmit(&hspi2, txData, 4, HAL_MAX_DELAY);
-
-      SPI_CS_Deselect();
-
-      if (status != HAL_OK)
-      {
-        printf("HAL_SPI_Transmit() failed\n\r");
-        Error_Handler();
-      }
-    }
-  }
-  /* USER CODE END StartBleTask */
-}
-
-/* USER CODE BEGIN Header_StartCanReceiveTask */
-/**
-* @brief Function implementing the CanReceiveTask thread.
-* @param argument: Not used
-* @retval None
-*/
-/* USER CODE END Header_StartCanReceiveTask */
-void StartCanReceiveTask(void *argument)
-{
-  /* USER CODE BEGIN StartCanReceiveTask */
-
-  /* Infinite loop */
-  for(;;)
-  {
-    if(canReceived == 1) {
-      canReceived = 0;
-      printf("CAN received [");
-      // printf("StdId=0x%lx \n\r", canRcvRxHeader.StdId);
-      // printf("RTR=0x%lx \n\r", canRcvRxHeader.RTR);
-      // printf("IDE=0x%lx \n\r", canRcvRxHeader.IDE);
-      // printf("DLC=0x%lx \n\r", canRcvRxHeader.DLC);
-      for (int i=0; i<canRcvRxHeader.DLC-1; i++) {
-        printf("%02x ", canRcvData[i]);
-      }
-      printf("%02x]\n\r", canRcvData[canRcvRxHeader.DLC-1]);
-    }
-
-    vTaskDelay(pdMS_TO_TICKS(300));
-  }
-  /* USER CODE END StartCanReceiveTask */
-}
-
-/* USER CODE BEGIN Header_StartDisplayTask */
-/**
-* @brief Function implementing the displayTask thread.
-* @param argument: Not used
-* @retval None
-*/
-/* USER CODE END Header_StartDisplayTask */
-void StartDisplayTask(void *argument)
-{
-  /* USER CODE BEGIN StartDisplayTask */
-  DHT_DataTypedef dht22Data;
-  char humidity[16];
-  char temperature[16];
-
-  // Init lcd using one of the stm32HAL i2c typedefs
-  if (ssd1306_Init(&hi2c1) != 0) {
-    Error_Handler();
-  }
-  vTaskDelay(pdMS_TO_TICKS(100));
-
-  /* Infinite loop */
-  for(;;)
-  {
-    if (xQueueReceive(dht22Queue, &dht22Data, pdMS_TO_TICKS(100)) == pdPASS)
-    {
-      vMainCanTransmit(&hcan1, &dht22Data);
-      memset(humidity, 0, 16);
-      memset(temperature, 0, 16);
-      snprintf(humidity, 16, "H %.2f", dht22Data.Humidity);
-      snprintf(temperature, 16, "T %.2f", dht22Data.Temperature);
-      printf("LCD [%s %s]\n\r", temperature, humidity);
-
-      ssd1306_Fill(Black);
-      ssd1306_UpdateScreen(&hi2c1);
-
-      // Write data to local screenbuffer
-      ssd1306_SetCursor(0, 0);
-      ssd1306_WriteString(temperature, Font_7x10, White);
-
-      ssd1306_SetCursor(0, 12);
-      ssd1306_WriteString(humidity, Font_7x10, White);
-
-      // Copy all data from local screenbuffer to the screen
-      ssd1306_UpdateScreen(&hi2c1);
-    }
-    // osDelay(1);
-    vTaskDelay(pdMS_TO_TICKS(500));
-  }
-  /* USER CODE END StartDisplayTask */
-}
 
 /**
   * @brief  Period elapsed callback in non blocking mode
