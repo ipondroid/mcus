@@ -54,12 +54,12 @@ static void prvSpiTask(void* pvParameters) {
 
 BaseType_t SpiTask_CreateTask(void) {
     return xTaskCreate(
-        prvSpiTask,                     // Task function
-        "SPI_Task",                     // Task name
-        configMINIMAL_STACK_SIZE * 2,   // Stack size
-        NULL,                           // Parameters
-        tskIDLE_PRIORITY + 2,           // Priority
-        &g_xSpiTaskHandle               // Task handle
+        prvSpiTask,
+        "SPI_Task",
+        configMINIMAL_STACK_SIZE * 2,
+        NULL,
+        tskIDLE_PRIORITY + 2,
+        &g_xSpiTaskHandle
     );
 }
 

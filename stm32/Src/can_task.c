@@ -2,7 +2,7 @@
 #include "state_manager.h"
 #include "events.h"
 #include "commands.h"
-#include "sensor_task.h" // for SensorData_t
+#include "sensor_task.h"
 #include "FreeRTOS.h"
 #include "task.h"
 #include "main.h"
@@ -13,10 +13,8 @@
 
 static CANMsgBuffer_t g_CANMsgPool[CAN_MSG_POOL_SIZE];
 
-// CAN task handle
 static TaskHandle_t g_xCanTaskHandle = NULL;
 
-// CAN transmit function
 static void prvCanTransmit(SensorData_t* pData) {
     CAN_TxHeaderTypeDef txHeader;
     uint32_t txMailbox;
@@ -107,12 +105,12 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan) {
 
 BaseType_t CanTask_CreateTask(void) {
     return xTaskCreate(
-        prvCanTask,                     // Task function
-        "CAN_Task",                     // Task name
-        configMINIMAL_STACK_SIZE * 2,   // Stack size
-        NULL,                           // Parameters
-        tskIDLE_PRIORITY + 3,           // Priority
-        &g_xCanTaskHandle               // Task handle
+        prvCanTask,
+        "CAN_Task",
+        configMINIMAL_STACK_SIZE * 2,
+        NULL,
+        tskIDLE_PRIORITY + 3,
+        &g_xCanTaskHandle
     );
 }
 

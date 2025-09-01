@@ -7,7 +7,6 @@
 
 extern SPI_HandleTypeDef hspi2;
 
-// SPI command queue handle (created and assigned in main.c)
 extern QueueHandle_t g_xSpiCommandQueue;
 
 BaseType_t SpiTask_CreateTask(void);

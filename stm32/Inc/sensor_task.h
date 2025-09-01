@@ -2,13 +2,28 @@
 #define SENSOR_TASK_H
 
 #include "FreeRTOS.h"
+#include "task.h"
+#include "sensor_interface.h"
+#include "task_manager.h"
 
-// Sensor data struct definition
+/* Task parameters */
+#define SENSOR_TASK_STACK_SIZE    (configMINIMAL_STACK_SIZE * 2)
+#define SENSOR_TASK_PRIORITY      (tskIDLE_PRIORITY + 2)
+
 typedef struct {
-    float fTemperature;
-    float fHumidity;
-} SensorData_t;
+    TaskHandle_t xTaskHandle;
+    SensorConfig_t xConfig;
+    SensorData_t xLastReading;
+    uint32_t ulErrorCount;
+    uint32_t ulLastReadTime;
+} SensorTaskContext_t;
+
+BaseType_t SensorTask_CreateSensorTask(const SensorConfig_t* pConfig, SensorTaskContext_t** pTaskContext);
 
 BaseType_t SensorTask_CreateTask(void);
+
+BaseType_t SensorTask_DestroyTask(SensorTaskContext_t* pTaskContext);
+
+BaseType_t SensorTask_GetLastReading(const SensorTaskContext_t* pTaskContext, SensorData_t* pData);
 
 #endif // SENSOR_TASK_H

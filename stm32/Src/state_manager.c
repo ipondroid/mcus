@@ -38,7 +38,7 @@ static void prvStateManagerTask(void* pvParameters) {
 }
 
 static void prvHandleEvent(Event_t* pxEvent) {
-    printf("SMT E%d\n\r", pxEvent->eType);
+    printf("SMT EV%d\n\r", pxEvent->eType);
 
     switch (g_SystemState.eSystemMode) {
         case MODE_NORMAL_OPERATION:
@@ -65,15 +65,19 @@ static void prvHandleEvent(Event_t* pxEvent) {
 static void prvHandleSensorDataReady(Event_t* pxEvent) {
     SensorData_t* pSensorData = (SensorData_t*)pxEvent->pPayload;
 
+    if (pSensorData->ucSensorId != 0) {
+        // We only handle sensor ID 0 (DHT22) for now
+        pxEvent->pPayload = NULL;
+        return;
+    }
+
     g_SystemState.fLastTemperature = pSensorData->fTemperature;
     g_SystemState.fLastHumidity = pSensorData->fHumidity;
-    // printf("SMT: System state updated with new sensor data.\n\r");
 
     SensorData_t* pDataForDisplay = (SensorData_t*)pvPortMalloc(sizeof(SensorData_t));
     SensorData_t* pDataForCan = (SensorData_t*)pvPortMalloc(sizeof(SensorData_t));
     SensorData_t* pDataForSpi = (SensorData_t*)pvPortMalloc(sizeof(SensorData_t));
 
-    // Check memory allocation
     if (pDataForDisplay == NULL || pDataForCan == NULL || pDataForSpi == NULL) {
         printf("SMT: Failed to allocate memory for command payloads.\n\r");
         if(pDataForDisplay) vPortFree(pDataForDisplay);
@@ -125,11 +129,11 @@ static void prvHandleCANReceivedData(Event_t* pxEvent) {
 
 BaseType_t StateManager_CreateTask(void) {
     return xTaskCreate(
-        prvStateManagerTask,            // Task function
-        "StateManager",                 // Task name
-        configMINIMAL_STACK_SIZE * 4,   // Stack size
-        NULL,                           // Parameters
-        tskIDLE_PRIORITY + 2,           // Priority
-        &g_xStateManagerTaskHandle      // Task handle
+        prvStateManagerTask,
+        "StateManager",
+        configMINIMAL_STACK_SIZE * 4,
+        NULL,
+        tskIDLE_PRIORITY + 2,
+        &g_xStateManagerTaskHandle
     );
 }

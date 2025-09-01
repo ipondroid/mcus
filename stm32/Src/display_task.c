@@ -1,7 +1,7 @@
 #include "display_task.h"
 #include "state_manager.h"
 #include "commands.h"
-#include "sensor_task.h" // for SensorData_t
+#include "sensor_task.h"
 #include "FreeRTOS.h"
 #include "task.h"
 #include <stdio.h>
@@ -52,12 +52,12 @@ static void prvDisplayTask(void* pvParameters) {
 
 BaseType_t DisplayTask_CreateTask(void) {
     return xTaskCreate(
-        prvDisplayTask,                 // Task function
-        "Display_Task",                 // Task name
-        configMINIMAL_STACK_SIZE * 2,   // Stack size
-        NULL,                           // Parameters
-        tskIDLE_PRIORITY + 2,           // Priority
-        &g_xDisplayTaskHandle           // Task handle
+        prvDisplayTask,
+        "Display_Task",
+        configMINIMAL_STACK_SIZE * 2,
+        NULL,
+        tskIDLE_PRIORITY + 2,
+        &g_xDisplayTaskHandle
     );
 }
 

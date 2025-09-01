@@ -5,17 +5,17 @@
 #include <stdbool.h>
 
 typedef enum {
-    MODE_INITIALIZING,      // Initializing
-    MODE_NORMAL_OPERATION,  // Normal operation
-    MODE_LOW_POWER,         // Low power mode
-    MODE_ERROR              // System error state
+    MODE_INITIALIZING,
+    MODE_NORMAL_OPERATION,
+    MODE_LOW_POWER,
+    MODE_ERROR
 } SystemMode_t;
 
 typedef struct {
     SystemMode_t eSystemMode;
 
-    bool bIsSpiConnected;       // Whether SPI is connected with ESP32
-    bool bIsCanActive;        // Whether the CAN bus is active
+    bool bIsSpiConnected;
+    bool bIsCanActive;
 
     float fLastTemperature;
     float fLastHumidity;
@@ -25,7 +25,6 @@ typedef struct {
 
 } SystemState_t;
 
-// Global system state
 extern SystemState_t g_SystemState;
 
 #endif // SYSTEM_STATE_H

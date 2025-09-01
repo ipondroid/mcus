@@ -36,6 +36,8 @@
 #include "can_task.h"
 #include "spi_task.h"
 #include "sensor_task.h"
+#include "sensor_task.h"
+#include "sensor_manager.h"
 #include "display_task.h"
 #include "commands.h"
 
@@ -135,7 +137,6 @@ int main(void)
   /* USER CODE END 2 */
 
   /* Init scheduler */
-  osKernelInitialize();
 
   /* USER CODE BEGIN RTOS_MUTEX */
   /* add mutexes, ... */
@@ -163,7 +164,47 @@ int main(void)
   StateManager_CreateTask();
   CanTask_CreateTask();
   SpiTask_CreateTask();
-  SensorTask_CreateTask();
+
+  /* Initialize Sensor Manager and register sensors */
+  if (SensorManager_Init() == SENSOR_MANAGER_OK) {
+    printf("Main: Sensor Manager initialized\n\r");
+    
+    SensorConfig_t dht22Config = {
+      .ucSensorId = 0,
+      .eType = SENSOR_TYPE_DHT22,
+      .pGPIOPort = GPIOA,
+      .uGPIOPin = DHT22_Pin,
+      .ulReadingIntervalMs = 3000,
+      .ucMaxRetries = 3,
+      .uxTaskPriority = tskIDLE_PRIORITY + 2,
+      .usStackSize = SENSOR_TASK_STACK_SIZE
+    };
+    
+    if (SensorManager_RegisterSensor(&dht22Config) == SENSOR_MANAGER_OK) {
+      printf("DHT22 registered (ID: %d)\n\r", dht22Config.ucSensorId);
+    } else {
+      printf("Failed to register DHT22\n\r");
+    }
+    
+    // dummy DS18B20
+    SensorConfig_t ds18b20Config = {
+      .ucSensorId = 1,
+      .eType = SENSOR_TYPE_DS18B20,
+      .pGPIOPort = GPIOB,
+      .uGPIOPin = GPIO_PIN_0,
+      .ulReadingIntervalMs = 5000,
+      .ucMaxRetries = 2,
+      .uxTaskPriority = tskIDLE_PRIORITY + 2,
+      .usStackSize = SENSOR_TASK_STACK_SIZE
+    };
+
+    if (SensorManager_RegisterSensor(&ds18b20Config) == SENSOR_MANAGER_OK) {
+      printf("DS18B20 registered (ID: %d)\n\r", ds18b20Config.ucSensorId);
+    } else {
+      printf("Failed to register DS18B20\n\r");
+    }
+  }
+
   DisplayTask_CreateTask();
 
   /* USER CODE BEGIN RTOS_THREADS */
@@ -175,7 +216,7 @@ int main(void)
   /* USER CODE END RTOS_EVENTS */
 
   /* Start scheduler */
-  osKernelStart();
+  vTaskStartScheduler();
 
   /* We should never get here as control is now taken by the scheduler */
 

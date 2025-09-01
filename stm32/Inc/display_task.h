@@ -7,7 +7,6 @@
 
 extern I2C_HandleTypeDef hi2c1;
 
-// Display command queue handle
 extern QueueHandle_t g_xDisplayCommandQueue;
 
 BaseType_t DisplayTask_CreateTask(void);
