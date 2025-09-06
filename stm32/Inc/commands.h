@@ -14,7 +14,6 @@ typedef enum {
 typedef struct {
     CommandType_t eType;        // Command type
     void*         pPayload;     // Data to be passed along with the command
-    uint32_t      ulDataSize;   // Payload data size
 } Command_t;
 
 

@@ -105,7 +105,7 @@ static void prvHandleSensorDataReady(Event_t* pxEvent) {
     }
 
     // Send command to SPI Task
-    cmd = (Command_t){ .eType = CMD_SPI_SEND_DATA, .pPayload = pDataForSpi, .ulDataSize = sizeof(SensorData_t) };
+    cmd = (Command_t){ .eType = CMD_SPI_SEND_DATA, .pPayload = pDataForSpi };
     if (xQueueSend(g_xSpiCommandQueue, &cmd, 0) != pdPASS) {
         vPortFree(pDataForSpi);
     }
