@@ -1,7 +1,7 @@
 #include "display_task.h"
 #include "state_manager.h"
 #include "commands.h"
-#include "sensor_task.h"
+#include "sensor_interface.h"
 #include "FreeRTOS.h"
 #include "task.h"
 #include <stdio.h>

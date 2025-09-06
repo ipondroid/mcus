@@ -2,17 +2,13 @@
 #include "state_manager.h"
 #include "events.h"
 #include "commands.h"
+#include "sensor_interface.h"
 #include "main.h"
 #include "FreeRTOS.h"
 #include "task.h"
 #include <stdio.h>
 
 static TaskHandle_t g_xSpiTaskHandle = NULL;
-
-typedef struct {
-    float fTemperature;
-    float fHumidity;
-} SensorData_t;
 
 static void prvSpiTask(void* pvParameters) {
     Command_t xReceivedCommand;
@@ -62,5 +58,4 @@ BaseType_t SpiTask_CreateTask(void) {
         &g_xSpiTaskHandle
     );
 }
-
 
