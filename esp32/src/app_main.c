@@ -19,10 +19,13 @@
 #include "state_manager.h"
 #include "spi_task.h"
 #include "ble_task.h"
+#include "wifi_task.h"
+#include "mqtt_task.h"
 #include "events.h"
 #include "commands.h"
 
-static const char* TAG = "AppMain";
+// static const char* TAG = "AppMain";
+#define TAG "AppMain"
 
 QueueHandle_t g_xEventQueue = NULL;
 QueueHandle_t g_xBleCommandQueue = NULL;
@@ -44,6 +47,8 @@ void app_main(void)
     StateManager_CreateTask();
     SpiTask_CreateTask();
     BleTask_CreateTask();
+    WiFiTask_CreateTask();
+    MqttTask_CreateTask();
 
     ESP_LOGI(TAG, "Tasks and Queues created.");
 }
