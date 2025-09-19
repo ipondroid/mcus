@@ -4,7 +4,6 @@
 #include "FreeRTOS.h"
 #include "task.h"
 #include "sensor_interface.h"
-#include "task_manager.h"
 
 /* Task parameters */
 #define SENSOR_TASK_STACK_SIZE    (configMINIMAL_STACK_SIZE * 2)

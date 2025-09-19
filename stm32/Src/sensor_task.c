@@ -33,36 +33,9 @@ static void prvGenericSensorTask(void* pvParameters) {
     // Initial delay to allow other tasks to start
     vTaskDelay(pdMS_TO_TICKS(1000 + (pConfig->ucSensorId * 100))); // Stagger startup
 
-    uint32_t ulAdaptiveInterval = pConfig->ulReadingIntervalMs;
-
     for (;;) {
-        // Check task state and respond to dynamic controls
-        TaskState_t eTaskState;
-        if (TaskManager_GetTaskState(pConfig->ucSensorId, &eTaskState) == TASK_MANAGER_OK) {
-            if (eTaskState == TASK_STATE_DORMANT || eTaskState == TASK_STATE_SUSPENDED) {
-                // Task is dormant/suspended, wait longer
-                vTaskDelay(pdMS_TO_TICKS(ulAdaptiveInterval * 2));
-                continue;
-            }
-        }
-
-        // Update metrics for task management
-        SensorMetrics_t xMetrics = {
-            .ulDataAge = xTaskGetTickCount() - pContext->ulLastReadTime,
-            .ulErrorRate = pContext->ulErrorCount > 0 ?
-                          (pContext->ulErrorCount * 100) / (pContext->ulErrorCount + 1) : 0,
-            .ulImportanceScore = (pConfig->eType == SENSOR_TYPE_DHT22) ? 100 : 50,
-            .ucDemandLevel = 128, // Default medium demand
-            .ulSystemLoad = 0
-        };
-
-        TaskManager_UpdateMetrics(pConfig->ucSensorId, &xMetrics);
-
-        // Calculate adaptive reading interval
-        ulAdaptiveInterval = TaskManager_CalculateAdaptiveInterval(pConfig->ucSensorId, &xMetrics);
-
-        // Wait for the adaptive reading interval
-        vTaskDelay(pdMS_TO_TICKS(ulAdaptiveInterval));
+        // Wait for the reading interval
+        vTaskDelay(pdMS_TO_TICKS(pConfig->ulReadingIntervalMs));
 
         SensorData_t sensorData;
         memset(&sensorData, 0, sizeof(SensorData_t));
@@ -101,17 +74,11 @@ static void prvGenericSensorTask(void* pvParameters) {
                    pConfig->ucSensorId, pConfig->ucMaxRetries);
 
             prvSendSensorEvent(&sensorData, EVT_SENSOR_READ_ERROR);
-
-            if (pContext->ulErrorCount > 5) {
-                TaskManager_TransitionState(pConfig->ucSensorId, TASK_STATE_ERROR);
-            }
         } else {
             memcpy(&pContext->xLastReading, &sensorData, sizeof(SensorData_t));
             pContext->ulLastReadTime = sensorData.ulTimestamp;
 
             prvSendSensorEvent(&sensorData, EVT_SENSOR_DATA_READY);
-
-            TaskManager_TransitionState(pConfig->ucSensorId, TASK_STATE_RUNNING);
         }
     }
 }
